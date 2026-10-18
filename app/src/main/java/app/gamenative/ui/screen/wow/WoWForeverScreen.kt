@@ -875,13 +875,41 @@ private const val ADRENO_8XX_DRIVER = "Turnip-V32-RP6sched"
 private const val PROTON_VERSION = "proton-11.0-90624-arm64ec"
 private const val DXVK_VERSION = "2.4.1-wow-aarch64-test"
 
-private data class GpuProfile(val driver: String, val tuDebug: String, val screenSize: String, val label: String, val edition: String) {
+private const val MALI_DRIVER = "System"
+
+private data class GpuProfile(
+    val driver: String,
+    val tuDebug: String,
+    val screenSize: String,
+    val label: String,
+    val edition: String,
+    val graphicsDriver: String = "Wrapper",
+    val driverConfig: String = "version=$driver,adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high",
+) {
     companion object {
-        fun detect(context: Context) = if (isAdreno8xxDevice(context)) {
-            GpuProfile(ADRENO_8XX_DRIVER, "noconform,sysmem", "1280x720", "Adreno 8xx", "Snapdragon 8 Elite / Adreno 8xx")
-        } else {
-            GpuProfile(DEFAULT_DRIVER, "noconform", "1920x1080", "Adreno 740", "Snapdragon 8 Series / Adreno 740")
+        fun detect(context: Context) = when {
+            isMaliDevice(context) -> maliProfile()
+            isAdreno8xxDevice(context) ->
+                GpuProfile(ADRENO_8XX_DRIVER, "noconform,sysmem", "1280x720", "Adreno 8xx", "Snapdragon 8 Elite / Adreno 8xx")
+            else -> GpuProfile(DEFAULT_DRIVER, "noconform", "1920x1080", "Adreno 740", "Snapdragon 8 Series / Adreno 740")
         }
+
+        // Mali has no Turnip, so the game renders through the vendor's own Vulkan driver behind
+        // GameNative's wrapper. Mali lacks BCn textures, which WoW uses everywhere: the wrapper
+        // decodes them with a compute shader. DXVK 2.x needs Vulkan 1.3 from the wrapper, so ask
+        // for it explicitly. The 720p budget is a starting guess for a Dimensity 8300 (RG477V).
+        private fun maliProfile() = GpuProfile(
+            driver = MALI_DRIVER,
+            tuDebug = "",
+            screenSize = "1280x720",
+            label = "Mali",
+            edition = "MediaTek / Mali (experimental)",
+            graphicsDriver = "Wrapper-gamenative",
+            driverConfig = "vulkanVersion=1.3,version=$MALI_DRIVER,resourceType=auto,bcnEmulation=auto,bcnEmulationType=compute,bcnEmulationCache=1,quality=high,presentMode=mailbox,gpuName=Device",
+        )
+
+        private fun isMaliDevice(context: Context) =
+            GPUInformation.getRenderer(context)?.contains("mali", ignoreCase = true) == true
 
         private fun isAdreno8xxDevice(context: Context): Boolean {
             if (GPUInformation.isAdreno8Elite(context)) return true
@@ -959,15 +987,15 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 
 private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String): JSONObject {
     val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
-    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv"
+    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox${if (gpu.tuDebug.isEmpty()) "" else " TU_DEBUG=${gpu.tuDebug}"} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv"
     return JSONObject().apply {
         put("id", CONTAINER_ID)
         put("name", "WoW Forever")
         put("screenSize", screenSize)
         put("envVars", envVars)
-        put("graphicsDriver", "Wrapper")
+        put("graphicsDriver", gpu.graphicsDriver)
         put("graphicsDriverVersion", gpu.driver)
-        put("graphicsDriverConfig", "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high")
+        put("graphicsDriverConfig", gpu.driverConfig)
         put("displayRenderer", "vulkan")
         put("dxwrapper", "dxvk-$DXVK_VERSION-1")
         put("dxwrapperConfig", "version=$DXVK_VERSION-1")
