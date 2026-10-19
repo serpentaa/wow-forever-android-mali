@@ -897,11 +897,11 @@ private data class GpuProfile(
         // Mali has no Turnip, so the game renders through the vendor's own Vulkan driver behind
         // GameNative's wrapper. Mali lacks BCn textures, which WoW uses everywhere: the wrapper
         // decodes them with a compute shader. DXVK 2.x needs Vulkan 1.3 from the wrapper, so ask
-        // for it explicitly. The 720p budget is a starting guess for a Dimensity 8300 (RG477V).
+        // for it explicitly. The budget matches the RG477V's 1280x960 panel.
         private fun maliProfile() = GpuProfile(
             driver = MALI_DRIVER,
             tuDebug = "",
-            screenSize = "1280x720",
+            screenSize = "1280x960",
             label = "Mali",
             edition = "MediaTek / Mali (experimental)",
             graphicsDriver = "Wrapper-gamenative",
@@ -942,6 +942,10 @@ internal fun fitScreenSize(baseSize: String, windowWidth: Int, windowHeight: Int
     val aspect = maxOf(windowWidth, windowHeight).toFloat() / minOf(windowWidth, windowHeight)
     val height = sqrt(baseWidth * baseHeight / aspect)
     val width = height * aspect
+    // Never render above the panel's own pixels: a 1280x960 handheld gains nothing from 1658x1252.
+    val nativeWidth = maxOf(windowWidth, windowHeight)
+    val nativeHeight = minOf(windowWidth, windowHeight)
+    if (width >= nativeWidth || height >= nativeHeight) return "${nativeWidth}x$nativeHeight"
     return "${(width / 2).roundToInt() * 2}x${(height / 2).roundToInt() * 2}"
 }
 
@@ -1018,6 +1022,7 @@ private val CONFIG_DEFAULTS = linkedMapOf(
     "gxApi" to "\"D3D11\"",
     "textLocale" to "\"enUS\"",
     "audioLocale" to "\"enUS\"",
+    "gxWindow" to "\"1\"",
     "gxMaximize" to "\"1\"",
     "graphicsQuality" to "\"0\"",
     "ResampleQuality" to "\"0\"",
@@ -1075,7 +1080,7 @@ private fun ensureGameConfig(root: File, screenSize: String) {
     }
 }
 
-private val RESOLUTION_KEYS = listOf("gxFullscreenResolution", "gxWindowedResolution")
+private val RESOLUTION_KEYS = listOf("gxFullscreenResolution", "gxWindowedResolution", "gxResolution")
 
 internal fun fitsScreen(resolution: String, screenSize: String): Boolean {
     val (width, height) = resolution.split("x").map { it.toIntOrNull() ?: return false }.takeIf { it.size == 2 } ?: return false

@@ -33,6 +33,21 @@ class FitScreenSizeTest {
     }
 
     @Test
+    fun adreno740Base_onRetroidNova_capsAtPanel() {
+        assertEquals("1280x960", fitScreenSize("1920x1080", 1280, 960))
+    }
+
+    @Test
+    fun maliBase_onRg477v_usesPanel() {
+        assertEquals("1280x960", fitScreenSize("1280x960", 1280, 960))
+    }
+
+    @Test
+    fun adreno8xxBase_onSmallFourByThree_staysUnderPanel() {
+        assertEquals("1108x832", fitScreenSize("1280x720", 1280, 960))
+    }
+
+    @Test
     fun unknownWindow_keepsBaseSize() {
         assertEquals("1280x720", fitScreenSize("1280x720", 0, 0))
     }
