@@ -1045,6 +1045,8 @@ private val CONFIG_DEFAULTS = linkedMapOf(
     "groundEffectDensity" to "\"16\"",
     "GamePadEnable" to "\"1\"",
     "InputDeviceInterfaceStyle" to "\"1\"",
+    "GamePadCursorAutoEnable" to "\"1\"",
+    "GamePadCursorOnLogin" to "\"1\"",
 )
 
 private fun ensureGameConfig(root: File, screenSize: String) {
