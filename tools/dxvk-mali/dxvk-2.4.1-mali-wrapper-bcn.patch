@@ -1,0 +1,61 @@
+diff --git a/src/dxvk/dxvk_adapter.cpp b/src/dxvk/dxvk_adapter.cpp
+index debbe011..733a2fec 100644
+--- a/src/dxvk/dxvk_adapter.cpp
++++ b/src/dxvk/dxvk_adapter.cpp
+@@ -86,6 +86,20 @@ namespace dxvk {
+     result.optimal = properties3.optimalTilingFeatures;
+     result.linear  = properties3.linearTilingFeatures;
+     result.buffer  = properties3.bufferFeatures;
++
++    // Vulkan wrappers that emulate BCn on GPUs without it (Mali via the
++    // Winlator/GameNative bionic wrapper) only patch the original query.
++    // Merge its features in, so emulated BCn formats count as sampleable.
++    // The 32-bit legacy flags share their bit values with the 64-bit ones.
++    if (format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && format <= VK_FORMAT_BC7_SRGB_BLOCK) {
++      VkFormatProperties legacy = { };
++      m_vki->vkGetPhysicalDeviceFormatProperties(m_handle, format, &legacy);
++
++      result.optimal |= legacy.optimalTilingFeatures;
++      result.linear  |= legacy.linearTilingFeatures;
++      result.buffer  |= legacy.bufferFeatures;
++    }
++
+     return result;
+   }
+ 
+diff --git a/src/dxvk/dxvk_cmdlist.h b/src/dxvk/dxvk_cmdlist.h
+index 1934b9a0..8323d702 100644
+--- a/src/dxvk/dxvk_cmdlist.h
++++ b/src/dxvk/dxvk_cmdlist.h
+@@ -576,7 +576,30 @@ namespace dxvk {
+       const VkCopyBufferToImageInfo2* copyInfo) {
+       m_cmd.usedFlags.set(cmdBuffer);
+ 
+-      m_vkd->vkCmdCopyBufferToImage2(getCmdBuffer(cmdBuffer), copyInfo);
++      // Vulkan wrappers that emulate BCn (Mali via the Winlator/GameNative
++      // bionic wrapper) decode compressed uploads only in the original copy
++      // command. Use it whenever the copy carries no extension structs.
++      bool legacy = !copyInfo->pNext;
++
++      for (uint32_t i = 0; i < copyInfo->regionCount && legacy; i++)
++        legacy = !copyInfo->pRegions[i].pNext;
++
++      if (!legacy) {
++        m_vkd->vkCmdCopyBufferToImage2(getCmdBuffer(cmdBuffer), copyInfo);
++        return;
++      }
++
++      small_vector<VkBufferImageCopy, 16> regions;
++
++      for (uint32_t i = 0; i < copyInfo->regionCount; i++) {
++        const VkBufferImageCopy2& r = copyInfo->pRegions[i];
++        regions.push_back({ r.bufferOffset, r.bufferRowLength, r.bufferImageHeight,
++          r.imageSubresource, r.imageOffset, r.imageExtent });
++      }
++
++      m_vkd->vkCmdCopyBufferToImage(getCmdBuffer(cmdBuffer),
++        copyInfo->srcBuffer, copyInfo->dstImage, copyInfo->dstImageLayout,
++        copyInfo->regionCount, regions.data());
+     }
+     
+     

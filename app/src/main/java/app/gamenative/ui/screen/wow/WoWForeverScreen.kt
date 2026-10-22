@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import app.gamenative.BuildConfig
 import app.gamenative.PluviaApp
+import app.gamenative.PrefManager
 import app.gamenative.events.AndroidEvent
 import app.gamenative.ui.screen.wow.WowClientDownloader.BUILD_INFO
 import app.gamenative.ui.screen.wow.WowClientDownloader.EXE_NAME
@@ -876,6 +877,9 @@ private const val PROTON_VERSION = "proton-11.0-90624-arm64ec"
 private const val DXVK_VERSION = "2.4.1-wow-aarch64-test"
 
 private const val MALI_DRIVER = "System"
+// DXVK 2.4.1 patched to use the format query and buffer-to-image copy that the Vulkan wrapper
+// emulates BCn textures in. Patch, cross file and package are in tools/dxvk-mali.
+private const val MALI_DXVK_VERSION = "2.4.1-wow-aarch64-mali"
 
 private data class GpuProfile(
     val driver: String,
@@ -885,6 +889,8 @@ private data class GpuProfile(
     val edition: String,
     val graphicsDriver: String = "Wrapper",
     val driverConfig: String = "version=$driver,adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high",
+    val dxvkVersion: String = DXVK_VERSION,
+    val extraEnv: String = "",
 ) {
     companion object {
         fun detect(context: Context) = when {
@@ -895,17 +901,25 @@ private data class GpuProfile(
         }
 
         // Mali has no Turnip, so the game renders through the vendor's own Vulkan driver behind
-        // GameNative's wrapper. Mali lacks BCn textures, which WoW uses everywhere: the wrapper
-        // decodes them with a compute shader. DXVK 2.x needs Vulkan 1.3 from the wrapper, so ask
-        // for it explicitly. The budget matches the RG477V's 1280x960 panel.
+        // GameNative's Vulkan wrapper. Two wrapper problems needed working around on the RG477V:
+        // - Its OpConstantComposite SPIR-V pass bounds-checks a word index against the shader's
+        //   size in bytes, so it reads past the end of WoW's large shaders and faults on the
+        //   allocator's guard page. WRAPPER_NO_PATCH_OPCONSTCOMP=1 turns the pass off.
+        // - It emulates BCn textures (Mali has none) only in vkGetPhysicalDeviceFormatProperties
+        //   and vkCmdCopyBufferToImage. DXVK 2.x calls the "2" versions, so BC2 views failed and
+        //   textures uploaded undecoded. Mali gets a DXVK build that calls the originals.
+        // DXVK 2.x needs Vulkan 1.3 from the wrapper, so ask for it explicitly. The budget matches
+        // the RG477V's 1280x960 panel.
         private fun maliProfile() = GpuProfile(
             driver = MALI_DRIVER,
             tuDebug = "",
             screenSize = "1280x960",
             label = "Mali",
             edition = "MediaTek / Mali (experimental)",
-            graphicsDriver = "Wrapper-gamenative",
+            graphicsDriver = "Wrapper",
             driverConfig = "vulkanVersion=1.3,version=$MALI_DRIVER,resourceType=auto,bcnEmulation=auto,bcnEmulationType=compute,bcnEmulationCache=1,quality=high,presentMode=mailbox,gpuName=Device",
+            dxvkVersion = MALI_DXVK_VERSION,
+            extraEnv = "WRAPPER_NO_PATCH_OPCONSTCOMP=1",
         )
 
         private fun isMaliDevice(context: Context) =
@@ -974,6 +988,10 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
         }
     }
 
+    // Debug builds keep a Wine log (with DXVK's output in it) at
+    // Android/data/app.wowforever/files/wine_logs/wine_debug.log, so crashes after launch can be read.
+    if (BuildConfig.DEBUG) PrefManager.enableWineDebug = true
+
     onStatus("Configuring ${gpu.label} container...")
     val containerManager = ContainerManager(context)
     val config = containerConfig(gameRoot, gpu, screenSize)
@@ -991,7 +1009,16 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 
 private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String): JSONObject {
     val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
-    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox${if (gpu.tuDebug.isEmpty()) "" else " TU_DEBUG=${gpu.tuDebug}"} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv"
+    // Container variables are applied after DXVKHelper's DXVK_LOG_LEVEL=none, so these win.
+    // Debug builds also append one line of variables from extra_env.txt next to the game files,
+    // so driver and wrapper settings can be tried on a device without rebuilding the app.
+    val debugEnv = if (BuildConfig.DEBUG) {
+        val extra = File(gameRoot, "extra_env.txt").takeIf { it.isFile }?.readText()?.trim()?.replace(Regex("\\s+"), " ")
+        " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=none" + if (extra.isNullOrEmpty()) "" else " $extra"
+    } else {
+        ""
+    }
+    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox${if (gpu.tuDebug.isEmpty()) "" else " TU_DEBUG=${gpu.tuDebug}"} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv${if (gpu.extraEnv.isEmpty()) "" else " ${gpu.extraEnv}"}$debugEnv"
     return JSONObject().apply {
         put("id", CONTAINER_ID)
         put("name", "WoW Forever")
@@ -1001,8 +1028,8 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
         put("graphicsDriverVersion", gpu.driver)
         put("graphicsDriverConfig", gpu.driverConfig)
         put("displayRenderer", "vulkan")
-        put("dxwrapper", "dxvk-$DXVK_VERSION-1")
-        put("dxwrapperConfig", "version=$DXVK_VERSION-1")
+        put("dxwrapper", "dxvk-${gpu.dxvkVersion}-1")
+        put("dxwrapperConfig", "version=${gpu.dxvkVersion}-1")
         put("wineVersion", "$PROTON_VERSION-1")
         put("containerVariant", "bionic")
         put("fexcoreVersion", "2609-0")
@@ -1104,10 +1131,12 @@ private fun installBundledComponents(context: Context, onStatus: (String) -> Uni
         }
     }
 
-    val dxvkDir = File(ContentsManager.getContentTypeDir(context, ContentProfile.ContentType.CONTENT_TYPE_DXVK), DXVK_VERSION)
-    if (!File(dxvkDir, "profile.json").exists()) {
-        onStatus("Extracting DXVK ARM64...")
-        if (!extractBundledWcp(context, "dxvk-$DXVK_VERSION.wcp", dxvkDir)) Timber.e("Failed to extract DXVK")
+    for (version in listOf(DXVK_VERSION, MALI_DXVK_VERSION)) {
+        val dxvkDir = File(ContentsManager.getContentTypeDir(context, ContentProfile.ContentType.CONTENT_TYPE_DXVK), version)
+        if (!File(dxvkDir, "profile.json").exists()) {
+            onStatus("Extracting DXVK ARM64...")
+            if (!extractBundledWcp(context, "dxvk-$version.wcp", dxvkDir)) Timber.e("Failed to extract DXVK $version")
+        }
     }
 
     ImageFsInstaller.ensureBionicLib(context, ImageFs.find(context).rootDir)
