@@ -270,8 +270,12 @@ fun PluviaMain(
                 message = msgDialogState.message,
             )
 
-            var initialSplash by remember {
-                mutableStateOf(WoWLauncherState.shouldAutoLaunch && GamePath.isReady(context))
+            // Checked off the main thread: reading game files on an SD card can stall long enough
+            // to trigger an ANR before the first frame.
+            var initialSplash by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                val ready = WoWLauncherState.shouldAutoLaunch && withContext(Dispatchers.IO) { GamePath.isReady(context) }
+                if (ready && WoWLauncherState.shouldAutoLaunch) initialSplash = true
             }
             var preLaunchJob by remember { mutableStateOf<Job?>(null) }
 

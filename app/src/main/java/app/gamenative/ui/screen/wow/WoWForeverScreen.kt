@@ -168,13 +168,20 @@ fun WoWForeverScreen(
         scope.launch { fetchVersionStatus() }
     }
 
-    fun checkFiles(): Boolean {
-        files = GamePath.status(context, gamePath)
+    fun applyFiles(status: GamePath.Status): Boolean {
+        files = status
         if (files.isWrongGame) {
             errorMessage = "Incompatible game (${files.product}). WoW Forever requires World of Warcraft Classic Beta ($TARGET_PRODUCT)."
         }
         return files.isReady
     }
+
+    fun checkFiles(): Boolean = applyFiles(GamePath.status(context, gamePath))
+
+    // A freshly inserted SD card can stall file access for many seconds while Android scans it,
+    // long enough for the startup check to freeze the first frame and trigger an ANR.
+    suspend fun checkFilesInBackground(): Boolean =
+        applyFiles(withContext(Dispatchers.IO) { GamePath.status(context, gamePath) })
 
     fun denyStorageAccess() {
         files = files.copy(hasStorageAccess = false)
@@ -310,7 +317,7 @@ fun WoWForeverScreen(
     }
 
     LaunchedEffect(gamePath) {
-        val ready = checkFiles()
+        val ready = checkFilesInBackground()
         if (!files.hasStorageAccess && (files.dataExists || files.buildInfoExists)) {
             showStoragePermissionDialog = true
         }
