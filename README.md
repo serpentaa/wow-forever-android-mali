@@ -1,5 +1,26 @@
 # WoW Forever for Android
 
+> **This is a fork that adds MediaTek / Mali GPU support.** The app is
+> **[WoW Forever for Android](https://github.com/jaredgei/wow-forever-android) by
+> [jaredgei](https://github.com/jaredgei)**, and everything below that isn't about Mali is their
+> work, built on GameNative, Winlator and the WoW Forever RP6 community bundle (see
+> [Credits](#credits-and-how-it-works)). For Snapdragon devices, use the
+> [original releases](https://github.com/jaredgei/wow-forever-android/releases).
+>
+> What this fork adds:
+>
+> - **A Mali GPU profile.** The game renders through the device's own Mali Vulkan driver behind
+>   GameNative's Vulkan wrapper, with `WRAPPER_NO_PATCH_OPCONSTCOMP=1` to avoid a wrapper bug that
+>   crashes on WoW's large shaders.
+> - **A patched DXVK 2.4.1 for Mali** ([tools/dxvk-mali](tools/dxvk-mali)). The wrapper emulates
+>   BCn textures only in the older Vulkan calls, so this build uses those. It is built from
+>   [doitsujin/dxvk](https://github.com/doitsujin/dxvk) with
+>   [llvm-mingw](https://github.com/mstorsjo/llvm-mingw). Adreno devices keep the original DXVK.
+> - **Native resolution on 4:3 handhelds**, and the gamepad cursor on by default.
+>
+> Tested on the Anbernic RG477V (Dimensity 8300 / Mali-G615): login screen with correct textures
+> at a steady 60 FPS. Other Mali devices are untested.
+
 Play the **World of Warcraft: Forever beta** on Snapdragon Android handhelds as a normal Android app. You tap the icon, press Play, and the game runs.
 
 This uses Blizzard's own **Windows ARM64** WoW client, so the game itself runs natively on the phone's CPU. Wine translates the Windows calls, and DXVK plus a patched Turnip Vulkan driver render the game on the Adreno GPU. Nothing is emulated as x86.
@@ -18,6 +39,7 @@ This uses Blizzard's own **Windows ARM64** WoW client, so the game itself runs n
 | AYN Odin Portal (Snapdragon 8 Elite / Adreno 830) | Supported via bundled Turnip v32 driver |
 | RedMagic 11 Pro (Snapdragon 8 Elite / Adreno 840) | Tested in-world by arusiasotto |
 | Samsung Galaxy S23/S24/S25 / Z Fold series | Supported (with automatic Samsung UBWC optimization) |
+| Anbernic RG477V (Dimensity 8300 / Mali-G615) | This fork only: tested to the login screen at 60 FPS |
 
 Requirements:
 
