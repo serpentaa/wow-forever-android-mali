@@ -21,8 +21,9 @@ jobs:
           chmod +x tools/fetch_components.sh
           ./tools/fetch_components.sh
 
-      - name: Build Release APK
+      - name: Create local.properties and Build APK
         run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
           ./gradlew assembleModernRelease
 
